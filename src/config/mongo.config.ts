@@ -1,7 +1,6 @@
 import { MongooseModule } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
 
-// ✅ Ưu tiên lấy từ .env, nếu không có thì fallback
 const mongoUri =
   process.env.MONGO_URI ||
   'mongodb+srv://laclac:lacpham2005@pchat.igp8a1c.mongodb.net/?retryWrites=true&w=majority&appName=PChat';

@@ -8,7 +8,7 @@ export async function createMySQLConnection(config: ConfigService) {
     password: config.get<string>('MYSQL_PASSWORD'),
     database: config.get<string>('MYSQL_DATABASE'),
     waitForConnections: true,
-    connectionLimit: 10,
+    // connectionLimit: 10,
   });
   console.log(`✅ MySQL connected: ${config.get('MYSQL_DATABASE')}`);
   return pool;
