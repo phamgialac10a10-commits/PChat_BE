@@ -9,13 +9,11 @@ if (!mongoUri) {
   throw new Error('❌ Missing MONGO_URI in environment variables');
 }
 
-
-
-// ✅ Kết nối MongoDB
 export const MongoConfig = MongooseModule.forRoot(mongoUri, {
   connectionName: 'mongoConnection', 
 });
-console.log('✅ MongoDB connected successfully!');
+
+// console.log('✅ MongoDB connected successfully!');
 
 // mongoose.connection.on('connected', () => {
 //   console.log('✅ MongoDB connected successfully!');

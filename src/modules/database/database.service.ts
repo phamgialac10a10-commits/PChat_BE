@@ -14,7 +14,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   async query(sql: string, params?: any[]): Promise<any> {
-    if (!this.pool) throw new Error('❌ Database not initialized!');
+    if (!this.pool) throw new Error('Database not initialized!');
     const [rows] = await this.pool.query(sql, params);
     return rows;
   }
@@ -26,7 +26,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() {
     if (this.pool) {
       await this.pool.end();
-      console.log('🧹 MySQL connection closed.');
+      console.log('MySQL connection closed.');
     }
   }
 }

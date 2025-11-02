@@ -1,5 +1,5 @@
 export interface Role {
-    id: number;
+    id?: number;
     name: string;
     description?: string;
     created_at: Date;
