@@ -6,15 +6,26 @@ import { Role } from '../../models/roles.model';
 export class RoleService {
   constructor(private readonly db: DatabaseService) {}
 
-  async findAll(): Promise<Role[]> {
-    const rows = await this.db.query('select * from roles order by id asc');
-    return rows;
+  async findAll(): Promise<{ data: Role[]; total: number }> {
+    const rows = await this.db.query('select * from roles');
+
+    const countRows = await this.db.query('select count(*) as count from roles');
+
+    return {
+      data: rows,
+      total: countRows[0].count
+    };
   }
 
   async findById(id: number): Promise<Role | null> {
     const rows: any = await this.db.query('select * from roles where id = ?', [
       id,
     ]);
+    
+    if (!rows[0]) {
+      throw new NotFoundException('Role not found!');
+    }
+
     return rows;
   }
 
