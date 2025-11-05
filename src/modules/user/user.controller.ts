@@ -7,17 +7,13 @@ import {  Controller,
   Param,
   ParseIntPipe,
   NotFoundException,
-  BadRequestException,
-  UseGuards,
-  Req
-} from '@nestjs/common';
+  BadRequestException,} from '@nestjs/common';
 import { UserService } from './user.service';
 import { ApiBody, ApiParam, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 
 
-ApiTags('User')
-@Controller('users')
+@Controller()
 export class UserController {
     constructor (private readonly userService: UserService) {}
 

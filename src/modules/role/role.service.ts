@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, InternalServerErrorException} from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { Role } from '../../models/roles.model';
 
 @Injectable()
 export class RoleService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService) { }
 
   async findAll(): Promise<{ data: Role[]; total: number }> {
     const rows = await this.db.query('select * from roles');
@@ -30,14 +30,30 @@ export class RoleService {
   }
 
   async create(role: Omit<Role, 'id' | 'created_at' | 'updated_at'>) {
-    const result = await this.db.query(
-      `
+
+    if (!role.name || role.name.trim() === '') {
+      throw new BadRequestException(`Role's name must not be empty!`);
+    }
+
+    if (!role.description || role.description.trim() === '') {
+      throw new BadRequestException(`Role's description must not be empty!`);
+    }
+
+    try {
+      const result = await this.db.query(
+        `
             insert into roles(name, description, created_at, updated_at) 
             values(?, ?, now(), now())`,
-      [role.name, role.description],
-    );
-    const newRole = await this.findById(result.insertId);
-    return newRole;
+        [role.name, role.description],
+      );
+
+      return await this.findById(result.insertId);
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        throw new BadRequestException(`Role name "${role.name}" already exists!`);
+      }
+      throw new InternalServerErrorException(error.message);
+    }
   }
 
   async update(id: number, role: Partial<Role>) {
@@ -53,15 +69,22 @@ export class RoleService {
     if (!role.description || role.description.trim() === '') {
       throw new BadRequestException(`Role's description must not be empty!`);
     }
+    
+    try {
+      await this.db.query(
+        `update roles 
+         set name = ?, description = ?, updated_at = now()
+         where id = ?`,
+        [role.name, role.description, id],
+      );
+  
+      return await this.findById(id);;
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        throw new BadRequestException(`Role name "${role.name}" already exists!`);
+      }
+      throw new InternalServerErrorException(error.message);
+    }
 
-    await this.db.query(
-      `update roles 
-       set name = ?, description = ?, updated_at = now()
-       where id = ?`,
-      [role.name, role.description, id],
-    );
-
-    const updatedRole = await this.findById(id);
-    return updatedRole;
   }
 }
