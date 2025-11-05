@@ -149,6 +149,36 @@ export class AuthService {
     return success;
   }
 
+  async getToken(userId: number, email:string, roleId: number) {
+    if(!userId) {
+      throw new BadRequestException('Error geting token!');
+    }
+
+    if(!email) {
+      throw new BadRequestException('Error geting token!');
+    }
+
+    if(!roleId) {
+      throw new BadRequestException('Error geting token!');
+    }
+
+    const access_token = this.jwtService.sign(
+      { sub: userId, email: email, role_id: roleId },
+      { secret: this.config.get('JWT_SECRET'), expiresIn: '15m' },
+    );
+
+    await this.db.query(
+      `
+      update users
+      set access_token = ?,
+      access_expires_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+      where id = ?`,
+      [access_token, userId],
+    );
+
+    return access_token;
+  }
+
   async verify_access_token(token: string) {
     try {
       const payload = await this.jwtService.verifyAsync(token, {

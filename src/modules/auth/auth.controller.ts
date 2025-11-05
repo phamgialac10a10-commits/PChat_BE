@@ -7,10 +7,12 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
-import { ApiBody, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiParam, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-
+import { AuthGuard } from '@nestjs/passport';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController{
@@ -70,7 +72,7 @@ export class AuthController{
         required: ['access_token'],
       }
     })
-    @Post('/access-token')
+    @Post('/verify-access-token')
     async verifyAccessToken(@Body() body: { access_token: string }) {
       const { access_token } = body;
       return await this.authService.verify_access_token(access_token)
@@ -86,18 +88,21 @@ export class AuthController{
         required: ['refresh_token'],
       }
     })
-    @Post('/refresh-token')
+    @Post('/verify-refresh-token')
     async verifyRefreshToken(@Body() body: { refresh_token: string }) {
       const { refresh_token } = body;
       return await this.authService.verify_refresh_token(refresh_token)
     }
 
-    @Get('/logout')
-    async logout() {
-      const success = await this.authService.logout(1);
+    @ApiBearerAuth()
+    @UseGuards(AuthGuard('jwt'))
+    @Post('/logout')
+    async logout(@Req() req) {
+      const userId = req.user.sub;
+
+      const success = await this.authService.logout(userId);
       return {
         message: 'Logout successfully!',
-
       }
     }
 }

@@ -7,9 +7,14 @@ import {  Controller,
   Param,
   ParseIntPipe,
   NotFoundException,
-  BadRequestException,} from '@nestjs/common';
+  BadRequestException,
+  UseGuards,
+  Req
+} from '@nestjs/common';
 import { UserService } from './user.service';
-import { ApiBody, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiParam, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
+
 
 ApiTags('User')
 @Controller('users')
@@ -24,10 +29,14 @@ export class UserController {
             data: users
         };
     }
+    
 
-    @Get('/:id')
-    async getById(@Param('id', ParseIntPipe) id: number) {
-        const user = await this.userService.findById(id);
+    @ApiBearerAuth()
+    @UseGuards(AuthGuard('jwt'))
+    @Get('/me')
+    async getById(@Req() req) {
+        const userId = req.user.sub;
+        const user = await this.userService.findById(userId);
         return {
             message: 'Take info of user successfully!',
             data: user
