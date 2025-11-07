@@ -1,42 +1,30 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy } from 'passport-jwt';
-import { Request } from 'express';
-import { ConfigService } from '@nestjs/config';
-import { UserService } from '../user/user.service';
+import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { PassportStrategy } from "@nestjs/passport";
+import { ExtractJwt, Strategy } from "passport-jwt";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+
 
 @Injectable()
 export class RefreshTokenStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
-  constructor(
-    private config: ConfigService,
-    private usersService: UserService,
-  ) {
+  constructor(private config: ConfigService) {
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        (req: Request) => req?.cookies?.refresh_token, // lấy từ cookie
-      ]),
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       secretOrKey: config.get<string>('JWT_REFRESH_SECRET'),
-      passReqToCallback: true, // cho phép lấy thêm info từ request
+      passReqToCallback: true,
     } as any);
   }
 
-  async validate(req: Request, payload: any) {
-    const refreshToken = req?.cookies?.refresh_token;
-    if (!refreshToken) throw new UnauthorizedException('Missing refresh token');
+  async validate(req: any, payload: any){
+    const refreshToken = req.get('authorization')?.replace('Bearer', '').trim();
 
-    const user = await this.usersService.findById(payload.sub);
-    if (!user) throw new UnauthorizedException('User not found');
 
-    // OPTIONAL: kiểm tra trong DB refresh token hash có hợp lệ không
-    // const tokenValid = await this.usersService.validateRefreshToken(user.id, refreshToken);
-    // if (!tokenValid) throw new UnauthorizedException('Invalid refresh token');
+    if(!refreshToken) {
+        throw new UnauthorizedException('Refresh token missing');
+    }
 
-    return payload; // passed
+    return {
+        payload,
+        refreshToken,
+    }
   }
 }
-// async validateRefreshToken(userId: number, token: string) {
-//   const user = await this.findById(userId);
-//   if (!user || !user.refresh_token_hash) return false;
-
-//   return await bcrypt.compare(token, user.refresh_token_hash);
-// }

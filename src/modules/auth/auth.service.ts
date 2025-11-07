@@ -2,8 +2,10 @@ import {
   BadRequestException,
   Injectable,
   UnauthorizedException,
+  UnprocessableEntityException,
   InternalServerErrorException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -21,7 +23,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly db: DatabaseService,
-  ) {}
+  ) { }
 
   async register(userData: {
     fullname: string;
@@ -32,12 +34,12 @@ export class AuthService {
     gender: string;
   }) {
     if (!userData.email) {
-      throw new BadRequestException('Email must not be empty!');
+      throw new UnprocessableEntityException('Email must not be empty!');
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(userData.email)) {
-      throw new BadRequestException('Invalid email format!');
+      throw new UnprocessableEntityException('Invalid email format!');
     }
 
     const exists: any = await this.db.query(
@@ -50,13 +52,13 @@ export class AuthService {
     }
 
     if (!userData.fullname || userData.fullname.length <= 5) {
-      throw new BadRequestException(
+      throw new UnprocessableEntityException(
         'Fullname must be larger than 5 characters!',
       );
     }
 
     if (!userData.phone) {
-      throw new BadRequestException('Phone must not be empty!');
+      throw new UnprocessableEntityException('Phone must not be empty!');
     }
 
     const hash = await bcrypt.hash(userData.password, 10);
@@ -74,21 +76,41 @@ export class AuthService {
         insert into users (fullname, password, phone, email, date_of_birth, gender, role_id)
         values (?, ?, ?, ?, STR_TO_DATE(?, '%d/%m/%Y'), ?, ?)`,
       [
-        userData.fullname,
+        userData.fullname.trim(),
         hash,
-        userData.phone,
-        userData.email,
-        userData.date_of_birth,
-        userData.gender,
+        userData.phone.trim(),
+        userData.email.trim(),
+        userData.date_of_birth.trim(),
+        userData.gender.trim(),
         role[0].id,
       ],
     );
 
     const insertedId = newUser.insertId;
 
-    return {
-      newUser: await this.userService.findById(insertedId),
-    };
+    try {
+      const getToken =  await this.getTokens(insertedId, userData.email, role[0].id);
+
+      const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
+
+      await this.db.query(`
+      update users
+      set access_token = ?,
+          access_expires_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+          refresh_token = ?,
+          refresh_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
+      where id = ?    
+      `, [getToken.access_token, hashedRt, insertedId]);
+
+    } catch (error: any) {
+      await this.db.query(`
+        delete from users where id = ?
+        `, [insertedId])
+
+      throw new InternalServerErrorException('Registration failed!');
+    }
+
+    return await this.userService.findById(insertedId)
   }
 
   async login(email: string, password: string) {
@@ -108,34 +130,37 @@ export class AuthService {
       throw new UnauthorizedException('Email or password is wrong!');
     }
 
-    const access_token = this.jwtService.sign(
-      { sub: user.id, email: user.email, role_id: user.role_id },
-      { secret: this.config.get('JWT_SECRET'), expiresIn: '15m' },
-    );
+    const getToken = await this.getTokens(user.id, user.email, user.role_id);
 
-    const refresh_token = this.jwtService.sign(
-      { sub: user.id },
-      { secret: this.config.get('JWT_REFRESH_SECRET'), expiresIn: '7d' },
-    );
+    if (!getToken) {
+      throw new InternalServerErrorException('Error getting token!');
+    }
 
-    await this.db.query(
-      `
+    const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
+
+    await this.db.query(`
       update users
-      set access_token = ?, refresh_token = ?,
-      access_expires_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
-      refresh_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
-      where id = ?`,
-      [access_token, refresh_token, user.id],
-    );
+      set access_token = ?,
+          access_expires_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+          refresh_token = ?,
+          refresh_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
+      where id = ?    
+      `, [getToken.access_token, hashedRt, user.id]);
+    
+    
+    const result = await this.userService.findById(user.id)
 
-    return await this.userService.findLoginUser(user.id);
+    return {
+      data: result.data,
+      token: getToken
+    };
   }
 
   async logout(userId: number) {
     const result = await this.db.query(
       `
        update users 
-       set access_token = null, refresh_token = null, access_expires_at = null, refresh_expires_at = null 
+       set access_token = null, access_expires_at = null, refresh_token = null, refresh_expires_at = null 
        where id = ?`,
       [userId],
     );
@@ -149,16 +174,49 @@ export class AuthService {
     return success;
   }
 
-  async getToken(userId: number, email:string, roleId: number) {
-    if(!userId) {
+  async refreshToken(userId: number, refreshToken: string) {
+    const user = await this.userService.findById(userId);
+
+    if(!user || !user.token.refresh_token) {
+      throw new ForbiddenException('Access denied')
+    }
+
+    const rMatch = await bcrypt.compare(refreshToken, user.token.refresh_token)
+    
+    if(!rMatch) {
+      throw new ForbiddenException('Invalid refresh token')
+    }
+
+    const getToken = await this.getTokens(userId, user.data.email, user.data.role_id);
+
+    const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
+
+    const result = await this.db.query(`
+      update users
+      set access_token = ?,
+          access_expires_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+          refresh_token = ?,
+          refresh_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
+      where id = ?    
+      `, [getToken.access_token, hashedRt, userId]);
+
+    return {
+      success: result.affectedRows > 0,
+      access_token: getToken.access_token,
+      refreshToken: getToken.refresh_token
+    }
+  }
+
+  async getTokens(userId: number, email: string, roleId: number) {
+    if (!userId) {
       throw new BadRequestException('Error geting token!');
     }
 
-    if(!email) {
+    if (!email) {
       throw new BadRequestException('Error geting token!');
     }
 
-    if(!roleId) {
+    if (!roleId) {
       throw new BadRequestException('Error geting token!');
     }
 
@@ -167,16 +225,15 @@ export class AuthService {
       { secret: this.config.get('JWT_SECRET'), expiresIn: '15m' },
     );
 
-    await this.db.query(
-      `
-      update users
-      set access_token = ?,
-      access_expires_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
-      where id = ?`,
-      [access_token, userId],
+    const refresh_token = this.jwtService.sign(
+      { sub: userId },
+      { secret: this.config.get('JWT_REFRESH_SECRET'), expiresIn: '7d' },
     );
 
-    return access_token;
+    return {
+      access_token,
+      refresh_token
+    };
   }
 
   async verify_access_token(token: string) {

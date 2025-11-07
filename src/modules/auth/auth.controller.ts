@@ -62,6 +62,18 @@ export class AuthController{
       }
     }
     
+    @ApiBearerAuth()
+    @UseGuards(AuthGuard('jwt-refresh'))
+    @Post('/refresh')
+    async refresh(@Req() req){
+      const result = await this.authService.refreshToken(req.user.payload.sub, req.user.refreshToken)
+      if (result) {
+        return {
+          message: 'Token refreshed successfully',
+          result
+        }
+      }
+    }
 
     @ApiBody({
       schema: {
@@ -100,7 +112,7 @@ export class AuthController{
     async logout(@Req() req) {
       const userId = req.user.sub;
 
-      const success = await this.authService.logout(userId);
+      await this.authService.logout(userId);
       return {
         message: 'Logout successfully!',
       }

@@ -7,7 +7,10 @@ import {  Controller,
   Param,
   ParseIntPipe,
   NotFoundException,
-  BadRequestException,} from '@nestjs/common';
+  BadRequestException,
+  UseGuards,
+  Req
+} from '@nestjs/common';
 import { UserService } from './user.service';
 import { ApiBody, ApiParam, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
