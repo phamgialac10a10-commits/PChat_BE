@@ -35,10 +35,10 @@ export class UserController {
     @Get('/me')
     async getById(@Req() req) {
         const userId = req.user.sub;
-        const user = await this.userService.findById(userId);
+        const { data } = await this.userService.finProfile(userId);
         return {
             message: 'Take info of user successfully!',
-            data: user
+            data
         }
     }
 }

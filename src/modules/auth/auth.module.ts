@@ -7,11 +7,14 @@ import { DatabaseService } from '../database/database.service';
 import { UserService } from '../user/user.service';
 import { RoleService } from '../role/role.service';
 import { JwtStrategy } from './jwt.strategy';
+import { GoogleStrategy } from './google.strategy';
 import { RefreshTokenStrategy } from './refresh.strategy';
 import { PassportModule } from '@nestjs/passport';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
+    RedisModule,
     ConfigModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -24,7 +27,7 @@ import { PassportModule } from '@nestjs/passport';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, DatabaseService, UserService, RoleService, JwtStrategy, RefreshTokenStrategy],
+  providers: [AuthService, DatabaseService, UserService, RoleService, JwtStrategy, RefreshTokenStrategy, GoogleStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

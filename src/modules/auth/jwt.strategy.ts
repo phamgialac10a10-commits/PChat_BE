@@ -16,11 +16,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(req: any, payload: any) {
-    const token = req.headers['authorization']?.replace('Bearer ', '');
+    // const token = req.headers['authorization']?.replace('Bearer ', '');
 
-    if(!token) {
-      throw new UnauthorizedException('Missing access token');
-    }
+    // if(!token) {
+    //   throw new UnauthorizedException('Missing access token');
+    // }
 
     const user = await this.userService.findById(payload.sub);
 
@@ -28,13 +28,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         throw new UnauthorizedException('User no longer exists');
     }
 
-    if(!user.token.access_token || user.token.access_token !== token) {
-      throw new UnauthorizedException('Access token is invalid');
-    }
+    // if(!user.token.access_token || user.token.access_token !== token) {
+    //   throw new UnauthorizedException('Access token is invalid');
+    // }
 
-    if(user.token.access_expires_at && new Date() > user.token.access_expires_at) {
-      throw new UnauthorizedException('Access token expired');
-    }
+    // if(user.token.access_expires_at && new Date() > user.token.access_expires_at) {
+    //   throw new UnauthorizedException('Access token expired');
+    // }
 
     return payload;
   }
