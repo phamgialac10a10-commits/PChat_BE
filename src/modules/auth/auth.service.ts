@@ -416,27 +416,13 @@ export class AuthService {
       throw new ForbiddenException('Invalid refresh token');
     }
 
-    const getToken = await this.getTokens(
-      userId,
-      user.data.email,
-      user.data.role_id,
-    );
-
-    const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
-
-    const result = await this.db.query(
-      `
-      update users
-      set refresh_token = ?,
-          refresh_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
-      where id = ?    
-      `,
-      [hashedRt, userId],
+    const access_token = this.jwtService.sign(
+      { sub: userId, email: user.data.email, role_id: user.data.role_id },
+      { secret: this.config.get('JWT_SECRET'), expiresIn: '15m' },
     );
 
     return {
-      access_token: getToken.access_token,
-      refreshToken: getToken.refresh_token,
+      access_token: access_token,
     };
   }
 
