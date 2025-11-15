@@ -181,7 +181,29 @@ export class AuthController {
     const { password, confirmPassword }: any = body;
     console.log(password);
     console.log(confirmPassword);
-    await this.authService.setNewPassword(userId, password, confirmPassword);
+    await this.authService.setNewPasswordRequest(userId, password, confirmPassword);
+
+    return {
+      message: 'Send OTP successfully!',
+    };
+  }
+
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        otp: { type: 'string', example: '123456' },
+      },
+      required: ['otp'],
+    },
+  })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @Post('/set-new-password-verification')
+  async setNewPasswordVerification(@Req() req, @Body() body) {
+    const userId = req.user.sub;
+    const { otp }: any = body;
+    await this.authService.setNewPassword(otp);
 
     return {
       message: 'Updated new password successfully!',

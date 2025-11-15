@@ -119,46 +119,23 @@ export class AuthService {
         throw new InternalServerErrorException('Error generating OTP!');
       }
 
-      await this.sendVerifyMail(userData.email, userData.fullname, String(otp));
+      await this.sendVerifyMail(
+        userData.email,
+        userData.fullname,
+        String(otp),
+        'gmail',
+        'verify',
+      );
     } else {
       throw new InternalServerErrorException('Registration failed!');
     }
   }
 
   async register(otp: string) {
-    if (!otp || otp.toString().trim() === '') {
-      throw new BadRequestException('OTP is not valid!');
-    }
-
-    const existedOTP: any = await this.db.query(
-      `
-      SELECT id, status, channel, type, code, user_identifier, expires_at, created_at, updated_at, otp_used
-      FROM verification_codes
-      WHERE code = ?
-        AND otp_used = 0
-        AND status = 'pending'
-        AND channel = 'gmail'
-        AND type = 'verify'
-      ORDER BY created_at DESC
-      LIMIT 1
-      `,
-      [otp],
-    );
-
-    if (!existedOTP || existedOTP.length === 0) {
-      throw new BadRequestException('OTP is not valid or expired!');
-    }
-
-    if (existedOTP[0].expires_at < new Date()) {
-      await this.db.query(`DELETE FROM pending_registrations WHERE email = ?`, [
-        existedOTP[0].user_identifier,
-      ]);
-
-      throw new BadRequestException('OTP is expired!');
-    }
-
-    if (!existedOTP[0].user_identifier) {
-      throw new BadRequestException('Email is not valid!');
+    const existedOTP = await this.verifyValidOTP(otp, 'verify', 'gmail');
+    
+    if(!existedOTP) {
+      throw new InternalServerErrorException('Server error.');
     }
 
     const pendingUser: any = await this.db.query(
@@ -193,24 +170,6 @@ export class AuthService {
       throw new InternalServerErrorException('Registration failed!');
     }
 
-    const verification: any = await this.db.query(
-      `
-      update verification_codes
-      set otp_used = 1,
-          status = 'verified',
-          updated_at = NOW()
-      where code = ?`,
-      [existedOTP[0].code],
-    );
-
-    if(verification.affectedRows === 0){
-      await this.db.query(`DELETE FROM pending_registrations WHERE email = ?`, [
-        existedOTP[0].user_identifier,
-      ]);
-      
-      throw new BadRequestException('Error verifying');
-    }
-
     const getToken = await this.getTokens(
       insertedId,
       pendingUser[0].email,
@@ -238,6 +197,104 @@ export class AuthService {
     return {
       data: result.data,
       token: getToken,
+    };
+  }
+
+  async setNewPasswordRequest(
+    userId: number,
+    password: string,
+    confirmPassword: string
+  ) {
+    const users = await this.userService.findById(userId);
+    
+    console.log(users.data.email);
+
+    if (!users) {
+      throw new BadRequestException('This user does not exist.');
+    }
+
+    if (
+      !(password || password.toString().trim()) &&
+      !(confirmPassword || confirmPassword.toString().trim())
+    ) {
+      throw new BadRequestException(
+        'Please fill with password and confirm password',
+      );
+    }
+
+    if (!(password.toString().trim() === confirmPassword.toString().trim())) {
+      throw new BadRequestException(
+        'Password must match with confirm password',
+      );
+    }
+
+    const hashedPassword: any = await bcrypt.hash(password, 10);
+
+    await this.db.query(`insert into pending_password_reset(email, password) values(?, ?)`, [users.data.email, hashedPassword])
+    
+    
+
+    let OTPexisted = true;
+    let count = 0;
+    let otp: any = null;
+    while (OTPexisted || count === 3) {
+      otp = await generateOTP();
+
+      const checkOTP = await this.db.query(
+        `select id from verification_codes where code = ? and otp_used = 1`,
+        [otp],
+      );
+
+      if (checkOTP.length === 0) {
+        OTPexisted = false;
+      }
+
+      count++;
+    }
+
+    if (!otp) {
+      throw new InternalServerErrorException('Error generating OTP!');
+    }
+
+    await this.sendVerifyMail(
+        users.data.email,
+        users.data.fullname,
+        String(otp),
+        'email',
+        'reset password',
+      );
+  }
+
+  async setNewPassword(
+    otp: string,
+  ) {
+    const validOTP = await this.verifyValidOTP(otp, 'reset password', 'email');
+
+    if (!validOTP) {
+      throw new InternalServerErrorException('Fail to reset password!');
+    }
+
+    const pendingPassword = await this.db.query(`
+      select id, email, password from pending_password_reset
+      where email = ?`,
+    [validOTP[0].user_identifier]);
+
+    if(!pendingPassword) {
+      throw new BadRequestException('This password is invalid');
+    }
+
+    const newPassword = await this.db.query(`
+      update users
+      set password = ?
+      where email = ?`,
+    [pendingPassword[0].password, pendingPassword[0].email]);
+
+    if(newPassword.affectedRows === 0) {
+      throw new InternalServerErrorException('Error setting new password');
+    }
+
+    return {
+      success: true,
     };
   }
 
@@ -327,79 +384,29 @@ export class AuthService {
       if (!insertedId) {
         throw new InternalServerErrorException('Server error!');
       }
-
     } else {
       insertedId = existedUser.data.id;
     }
 
     const { data } = await this.userService.findById(insertedId);
 
-    const getToken = await this.getTokens(
-        insertedId,
-        data.email,
-        data.role_id,
-      );
+    const getToken = await this.getTokens(insertedId, data.email, data.role_id);
 
-      const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
+    const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
 
-      await this.db.query(
-        `
+    await this.db.query(
+      `
       update users
       set refresh_token = ?,
           refresh_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
       where id = ?    
       `,
-        [hashedRt, insertedId],
-      );
+      [hashedRt, insertedId],
+    );
 
     return {
       data,
-      token: getToken
-    };
-  }
-
-  async setNewPassword(
-    userId: number,
-    password: string,
-    confirmPassword: string,
-  ) {
-    const users = await this.userService.findById(userId);
-
-    if (!users) {
-      throw new BadRequestException('This user does not exist.');
-    }
-
-    if (
-      !(password || password.toString().trim()) &&
-      !(confirmPassword || confirmPassword.toString().trim())
-    ) {
-      throw new BadRequestException(
-        'Please fill with password and confirm password',
-      );
-    }
-
-    if (!(password.toString().trim() === confirmPassword.toString().trim())) {
-      throw new BadRequestException(
-        'Password must match with confirm password',
-      );
-    }
-
-    const hashedPassword: any = await bcrypt.hash(password, 10);
-
-    const result = await this.db.query(
-      `
-      update users
-      set password = ?
-      where id = ?`,
-      [hashedPassword, userId],
-    );
-
-    if (result.affectedRows === 0) {
-      throw new InternalServerErrorException('Error setting new password');
-    }
-
-    return {
-      success: true,
+      token: getToken,
     };
   }
 
@@ -444,7 +451,13 @@ export class AuthService {
     return success;
   }
 
-  async sendVerifyMail(email: string, fullname: string, otp: string) {
+  async sendVerifyMail(
+    email: string,
+    fullname: string,
+    otp: string,
+    channel: string,
+    type: string,
+  ) {
     if (!email) {
       throw new BadRequestException('Email is empty');
     }
@@ -453,7 +466,7 @@ export class AuthService {
       `
       insert into verification_codes(status, channel, type, code, user_identifier, otp_used, expires_at)
       values(?, ?, ?, ?, ?, ?, NOW() + INTERVAL 2 MINUTE)`,
-      ['pending', 'gmail', 'verify', otp, email, 0],
+      ['pending', channel, type, otp, email, 0],
     );
 
     const response = await axios.post(
@@ -493,6 +506,70 @@ export class AuthService {
     // console.log(response.data);
 
     return response;
+  }
+
+  async verifyValidOTP(otp: string, type: string, channel: string) {
+    if (!otp || otp.toString().trim() === '') {
+      throw new BadRequestException('OTP is not valid!');
+    }
+
+    const existedOTP: any = await this.db.query(
+      `
+      SELECT id, status, channel, type, code, user_identifier, expires_at, created_at, updated_at, otp_used
+      FROM verification_codes
+      WHERE code = ?
+        AND otp_used = 0
+        AND status = 'pending'
+        AND channel = ?
+        AND type = ?
+      `,
+      [otp, channel, type],
+    );
+
+    if (!existedOTP || existedOTP.length === 0) {
+      throw new BadRequestException('OTP is not valid or expired!');
+    }
+
+    if (existedOTP[0].expires_at < new Date()) {
+      // if (existedOTP[0].type === 'verify') {
+      //   await this.db.query(
+      //     `DELETE FROM pending_registrations WHERE email = ?`,
+      //     [existedOTP[0].user_identifier],
+      //   );
+      // }
+
+      throw new BadRequestException('OTP is expired!');
+    }
+
+    if (!existedOTP[0].user_identifier) {
+      throw new BadRequestException('Email is not valid!');
+    }
+
+    const verification: any = await this.db.query(
+      `
+      update verification_codes
+      set otp_used = 1,
+          status = 'verified',
+          updated_at = NOW()
+      where code = ?`,
+      [existedOTP[0].code],
+    );
+
+    if(verification.affectedRows = 0) {
+      throw new InternalServerErrorException('Verification failed');
+    }
+    
+    const result: any = await this.db.query(
+      `
+      SELECT id, status, channel, type, code, user_identifier, expires_at, created_at, updated_at, otp_used
+      FROM verification_codes
+      WHERE code = ?
+      AND status = 'verified'
+      `,
+      [otp],
+    );
+
+    return result;
   }
 
   async getTokens(userId: number, email: string, roleId: number) {

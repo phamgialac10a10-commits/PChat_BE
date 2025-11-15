@@ -16,7 +16,7 @@ import { ApiBody, ApiParam, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 
 
-@Controller()
+@Controller('users')
 export class UserController {
     constructor (private readonly userService: UserService) {}
 
