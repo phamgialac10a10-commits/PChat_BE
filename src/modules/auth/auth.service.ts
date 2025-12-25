@@ -76,59 +76,64 @@ export class AuthService {
       throw new InternalServerErrorException('Server error!');
     }
 
-    const pendingUser: any = await this.db.query(
-      `insert into pending_registrations(fullname, password, phone, email, date_of_birth, gender, role_id)
-       values(?, ?, ?, ?, STR_TO_DATE(?, '%d/%m/%Y'), ?, ?)`,
-      [
-        userData.fullname,
-        hash,
-        userData.phone,
-        userData.email,
-        userData.date_of_birth,
-        userData.gender,
-        role[0].id,
-      ],
+    // Store pending user in Redis instead of database
+    const pendingUserData = {
+      fullname: userData.fullname,
+      password: hash,
+      phone: userData.phone,
+      email: userData.email,
+      date_of_birth: userData.date_of_birth,
+      gender: userData.gender,
+      role_id: role[0].id,
+    };
+
+    const redisKey = `pending_user:${userData.email}`;
+    await this.redisService.set(
+      redisKey,
+      JSON.stringify(pendingUserData),
+      600, // 10 minutes TTL
     );
 
-    const insertedId = pendingUser.insertId;
+    let OTPexisted = true;
+    let count = 0;
+    let otp: any = null;
+    while (OTPexisted && count < 3) {
+      otp = await generateOTP();
 
-    if (insertedId) {
-      let OTPexisted = true;
-      let count = 0;
-      let otp: any = null;
-      while (OTPexisted || count === 3) {
-        otp = await generateOTP();
-
-        const checkOTP = await this.db.query(
-          `select id from verification_codes where code = ? and otp_used = 1`,
-          [otp],
-        );
-
-        if (checkOTP.length === 0) {
-          OTPexisted = false;
-        }
-
-        count++;
-      }
-
-      if (!otp) {
-        await this.db.query(`delete from pending_registrations where id = ?`, [
-          insertedId,
-        ]);
-
-        throw new InternalServerErrorException('Error generating OTP!');
-      }
-
-      await this.sendVerifyMail(
-        userData.email,
-        userData.fullname,
-        String(otp),
-        'gmail',
-        'verify',
+      const existingOTP = await this.redisService.get(
+        `otp:${otp}:verify:gmail`,
       );
-    } else {
-      throw new InternalServerErrorException('Registration failed!');
+
+      if (!existingOTP) {
+        OTPexisted = false;
+      }
+
+      count++;
     }
+
+    if (!otp) {
+      throw new InternalServerErrorException('Error generating OTP!');
+    }
+
+    // Store OTP in Redis with 2 minutes TTL
+    const otpRedisKey = `otp:${otp}:verify:gmail`;
+    const otpData = JSON.stringify({
+      status: 'pending',
+      channel: 'gmail',
+      type: 'verify',
+      code: otp,
+      user_identifier: userData.email,
+      otp_used: 0,
+    });
+    await this.redisService.set(otpRedisKey, otpData, 120); // 2 minutes TTL
+
+    await this.sendVerifyMail(
+      userData.email,
+      userData.fullname,
+      String(otp),
+      'gmail',
+      'verify',
+    );
   }
 
   async register(otp: string) {
@@ -138,29 +143,31 @@ export class AuthService {
       throw new InternalServerErrorException('Server error.');
     }
 
-    const pendingUser: any = await this.db.query(
-      `
-      select id, fullname, email, phone, gender, date_of_birth, password, role_id
-      from pending_registrations 
-      where email = ?`,
-      [existedOTP[0].user_identifier],
-    );
+    // Get pending user from Redis
+    const redisKey = `pending_user:${existedOTP.user_identifier}`;
+    const pendingUserJson = await this.redisService.get(redisKey);
 
-    if (!pendingUser) {
+    if (!pendingUserJson) {
       throw new BadRequestException(`User didn't registered yet!`);
     }
+
+    const pendingUser = JSON.parse(pendingUserJson);
+
+    // Convert date from DD/MM/YYYY to YYYY-MM-DD
+    const [day, month, year] = pendingUser.date_of_birth.split('/');
+    const formattedDate = `${year}-${month}-${day}`;
 
     const newUser: any = await this.db.query(
       `
       insert into users(fullname, email, phone, date_of_birth, password, gender, role_id) VALUES(?, ?, ?, ?, ?, ?, ?)`,
       [
-        pendingUser[0].fullname,
-        pendingUser[0].email,
-        pendingUser[0].phone,
-        pendingUser[0].date_of_birth,
-        pendingUser[0].password,
-        pendingUser[0].gender,
-        pendingUser[0].role_id,
+        pendingUser.fullname,
+        pendingUser.email,
+        pendingUser.phone,
+        formattedDate,
+        pendingUser.password,
+        pendingUser.gender,
+        pendingUser.role_id,
       ],
     );
 
@@ -172,14 +179,12 @@ export class AuthService {
 
     const getToken = await this.getTokens(
       insertedId,
-      pendingUser[0].email,
-      pendingUser[0].role_id,
+      pendingUser.email,
+      pendingUser.role_id,
     );
 
-    await this.db.query(
-      `delete from pending_registrations where id = ?`,
-      pendingUser[0].id,
-    );
+    // Delete pending user from Redis
+    await this.redisService.del(redisKey);
 
     const hashedRt = await bcrypt.hash(getToken.refresh_token, 10);
 
@@ -230,22 +235,28 @@ export class AuthService {
 
     const hashedPassword: any = await bcrypt.hash(password, 10);
 
-    await this.db.query(`insert into pending_password_reset(email, password) values(?, ?)`, [users.data.email, hashedPassword])
-    
-    
+    // Store pending password in Redis instead of database
+    const pendingPasswordKey = `pending_password:${users.data.email}`;
+    await this.redisService.set(
+      pendingPasswordKey,
+      JSON.stringify({
+        email: users.data.email,
+        password: hashedPassword,
+      }),
+      600, // 10 minutes TTL
+    );
 
     let OTPexisted = true;
     let count = 0;
     let otp: any = null;
-    while (OTPexisted || count === 3) {
+    while (OTPexisted && count < 3) {
       otp = await generateOTP();
 
-      const checkOTP = await this.db.query(
-        `select id from verification_codes where code = ? and otp_used = 1`,
-        [otp],
+      const existingOTP = await this.redisService.get(
+        `otp:${otp}:reset password:email`,
       );
 
-      if (checkOTP.length === 0) {
+      if (!existingOTP) {
         OTPexisted = false;
       }
 
@@ -256,13 +267,25 @@ export class AuthService {
       throw new InternalServerErrorException('Error generating OTP!');
     }
 
+    // Store OTP in Redis with 2 minutes TTL
+    const otpRedisKey = `otp:${otp}:reset password:email`;
+    const otpData = JSON.stringify({
+      status: 'pending',
+      channel: 'email',
+      type: 'reset password',
+      code: otp,
+      user_identifier: users.data.email,
+      otp_used: 0,
+    });
+    await this.redisService.set(otpRedisKey, otpData, 120); // 2 minutes TTL
+
     await this.sendVerifyMail(
-        users.data.email,
-        users.data.fullname,
-        String(otp),
-        'email',
-        'reset password',
-      );
+      users.data.email,
+      users.data.fullname,
+      String(otp),
+      'email',
+      'reset password',
+    );
   }
 
   async setNewPassword(
@@ -274,24 +297,28 @@ export class AuthService {
       throw new InternalServerErrorException('Fail to reset password!');
     }
 
-    const pendingPassword = await this.db.query(`
-      select id, email, password from pending_password_reset
-      where email = ?`,
-    [validOTP[0].user_identifier]);
+    // Get pending password from Redis
+    const pendingPasswordKey = `pending_password:${validOTP.user_identifier}`;
+    const pendingPasswordJson = await this.redisService.get(pendingPasswordKey);
 
-    if(!pendingPassword) {
-      throw new BadRequestException('This password is invalid');
+    if (!pendingPasswordJson) {
+      throw new BadRequestException('This password request is invalid or expired');
     }
+
+    const pendingPasswordData = JSON.parse(pendingPasswordJson);
 
     const newPassword = await this.db.query(`
       update users
       set password = ?
       where email = ?`,
-    [pendingPassword[0].password, pendingPassword[0].email]);
+      [pendingPasswordData.password, pendingPasswordData.email]);
 
-    if(newPassword.affectedRows === 0) {
+    if (newPassword.affectedRows === 0) {
       throw new InternalServerErrorException('Error setting new password');
     }
+
+    // Delete pending password from Redis
+    await this.redisService.del(pendingPasswordKey);
 
     return {
       success: true,
@@ -513,63 +540,33 @@ export class AuthService {
       throw new BadRequestException('OTP is not valid!');
     }
 
-    const existedOTP: any = await this.db.query(
-      `
-      SELECT id, status, channel, type, code, user_identifier, expires_at, created_at, updated_at, otp_used
-      FROM verification_codes
-      WHERE code = ?
-        AND otp_used = 0
-        AND status = 'pending'
-        AND channel = ?
-        AND type = ?
-      `,
-      [otp, channel, type],
-    );
+    // Check OTP from Redis
+    const otpRedisKey = `otp:${otp}:${type}:${channel}`;
+    const existedOTPJson = await this.redisService.get(otpRedisKey);
 
-    if (!existedOTP || existedOTP.length === 0) {
+    if (!existedOTPJson) {
       throw new BadRequestException('OTP is not valid or expired!');
     }
 
-    if (existedOTP[0].expires_at < new Date()) {
-      // if (existedOTP[0].type === 'verify') {
-      //   await this.db.query(
-      //     `DELETE FROM pending_registrations WHERE email = ?`,
-      //     [existedOTP[0].user_identifier],
-      //   );
-      // }
+    const existedOTP = JSON.parse(existedOTPJson);
 
-      throw new BadRequestException('OTP is expired!');
+    if (existedOTP.otp_used === 1 || existedOTP.status !== 'pending') {
+      throw new BadRequestException('OTP is not valid or expired!');
     }
 
-    if (!existedOTP[0].user_identifier) {
+    if (!existedOTP.user_identifier) {
       throw new BadRequestException('Email is not valid!');
     }
 
-    const verification: any = await this.db.query(
-      `
-      update verification_codes
-      set otp_used = 1,
-          status = 'verified',
-          updated_at = NOW()
-      where code = ?`,
-      [existedOTP[0].code],
-    );
+    // Update OTP status in Redis
+    const verifiedOtpData = JSON.stringify({
+      ...existedOTP,
+      otp_used: 1,
+      status: 'verified',
+    });
+    await this.redisService.set(otpRedisKey, verifiedOtpData, 120); // Keep for 2 more minutes
 
-    if(verification.affectedRows = 0) {
-      throw new InternalServerErrorException('Verification failed');
-    }
-    
-    const result: any = await this.db.query(
-      `
-      SELECT id, status, channel, type, code, user_identifier, expires_at, created_at, updated_at, otp_used
-      FROM verification_codes
-      WHERE code = ?
-      AND status = 'verified'
-      `,
-      [otp],
-    );
-
-    return result;
+    return existedOTP;
   }
 
   async getTokens(userId: number, email: string, roleId: number) {
