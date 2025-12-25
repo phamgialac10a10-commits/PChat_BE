@@ -3,6 +3,7 @@ export interface User {
   fullname: string;
   email: string;
   password_hash: string;
+  gender: string;
   is_active: boolean;
   access_token?: string;
   refresh_token?: string;

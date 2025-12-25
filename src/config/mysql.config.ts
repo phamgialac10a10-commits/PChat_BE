@@ -10,7 +10,6 @@ export async function createMySQLConnection(config: ConfigService) {
     waitForConnections: true,
     connectionLimit: 10,
   });
-  console.log(`✅ MySQL connected: ${config.get('MYSQL_DATABASE')}`);
   return pool;
 }
 
