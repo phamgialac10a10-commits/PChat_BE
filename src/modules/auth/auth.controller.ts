@@ -179,8 +179,7 @@ export class AuthController {
   async setNewPassword(@Req() req, @Body() body) {
     const userId = req.user.sub;
     const { password, confirmPassword }: any = body;
-    console.log(password);
-    console.log(confirmPassword);
+  
     await this.authService.setNewPasswordRequest(userId, password, confirmPassword);
 
     return {
